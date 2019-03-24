@@ -1,13 +1,14 @@
 cnn-model:
   epoch: 10
-  batch: 5
+  batch: 20
   out_size: 2
-  embed: 128
+  embed: 56
   filter-height-list: [1,2,3]
-  kernel_dim_size: 100
+  kernel_dim_size: 20
   dropout: 0.02
+  max_vocab_size: 32000
   attr_model: ./resources/attr_model
-  encoder_model: ./resources/encoder_model
+  cnn_model: ./resources/cnn_model
 train_file:
   resorces: ./resources/train.txt
 train_token_label_file:
@@ -15,4 +16,4 @@ train_token_label_file:
   labels: ./resources/train_label.txt
 save_model_path:
   attr_model: ./resources/attr_model
-  encoder_model: ./resources/encoder_model
+  cnn_model: ./resources/cnn_model

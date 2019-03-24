@@ -128,7 +128,7 @@ class textCNN(nn.Module):
         super(textCNN, self).__init__()
         self.vocab_size = vocab_size
         self.embed_size = embed_size
-        self.filter_height_list = self.filter_height_list
+        self.filter_height_list = filter_height_list
         self.kernel_dim_size = kernel_dim_size
         self.out_size = out_size
         self.dropout = dropout
@@ -136,17 +136,29 @@ class textCNN(nn.Module):
         self.conv13 = nn.Conv2d(1, self.kernel_dim_size, (3, self.embed_size))
         self.conv14 = nn.Conv2d(1, self.kernel_dim_size, (4, self.embed_size))
         self.conv15 = nn.Conv2d(1, self.kernel_dim_size, (5, self.embed_size))
+        #self.allconvs = nn.ModuleList([nn.Conv2d(1, self.kernel_dim_size, (filter_height, self.embed_size)) for filter_height in filter_height_list]) //まとめたやつ
         self.dropout = nn.Dropout(self.dropout)
         self.liner = nn.Linear(len(filter_height_list)*self.kernel_dim_size, self.out_size)
     def conv_and_pool(self, x, conv):
-        x = F.relu(conv(x)).squeeze(3)# (N, Co, W)
-        x = F.max_pool1d(x, x.size(2)).squeeze(2)
+        x = F.relu(conv(x)).squeeze(3)# (batch, kernel_dim_size, 畳み込んだ後の要素数)
+        x = F.max_pool1d(x, x.size(2)).squeeze(2) # (batch, kernel_dim_size)
         return x
     def forward(self, sentence,sentencelength):
-        embed_sentence = self.embed(sentence)
-        embed_sentence_plus = embed_sentence.unsqueeze(1)
-        print(embed_sentence_plus.size())
-
+        embed_sentence = self.embed(sentence)   # (batch, max_sentence_size, embedsize)
+        embed_sentence_plus = embed_sentence.unsqueeze(1) #(batch,1←並列化させる場合は増やす,max_sentence_size, embedsize)
+        x1 = self.conv_and_pool(embed_sentence_plus,self.conv13) #(batch,kernel_dim_size)
+        x2 = self.conv_and_pool(embed_sentence_plus,self.conv14) #(batch,kernel_dim_size)
+        x3 = self.conv_and_pool(embed_sentence_plus,self.conv15) #(batch,kernel_dim_size)
+        x = torch.cat((x1, x2, x3), 1) # (batch,len(filter_height_list)*kernel_dim_size)
+        """
+        まとめたやつ
+        x = [F.relu(conv(x)).squeeze(3) for conv in self.allconvs]  // [(batch,kernel_dim_size, 畳み込んだ後の要素数), ...]*len(filter_height_list)
+        x = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in x]  // [(batch,kernel_dim_size), ...]*len(filter_height_list)
+        x = torch.cat(x, 1)
+        """
+        x = self.dropout(x)
+        out = self.liner(x) #(batch, outsize)
+        return out
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def train(train_data, word_to_id, id_to_word, model_path):
     logger.info("========= WORD_SIZE={} ==========".format(len(word_to_id)))
@@ -173,19 +185,16 @@ def train(train_data, word_to_id, id_to_word, model_path):
             inputsentences = torch.tensor(inputsentences,dtype=torch.long,device=device)
             y = torch.tensor(labelslist,dtype=torch.long,device=device)
             CNN_out = CNN(inputsentences,input_padding_list)
-            loss = F.nll_loss(output, y)
+            loss = F.cross_entropy(CNN_out, y)
             loss.backward()
-            Encoder_optimizer.step()
+            CNN_optimizer.step()
             total_loss += loss
             logger.info("=============== loss: %s ===============" % loss)
-            break
-        break
         total_loss = total_loss/len(batch_training_data)
         logger.info("=============== total_loss: %s ===============" % total_loss)
         all_EPOCH_LOSS.append(total_loss)
     [logger.info("================ batchnumber: {}---loss: {}=======================".format(batchnumber,loss)) for batchnumber,loss in enumerate(all_EPOCH_LOSS)]
-    torch.save(classifier.state_dict(), model_path[0])
-    torch.save(Encoder.state_dict(), model_path[1])
+    torch.save(CNN.state_dict(), model_path[0])
 def makeminibatch(training_data):
     n = len(training_data)
     mini_batch_size = int(n/batch_size)
@@ -248,13 +257,14 @@ def sentence2words(sentence):
     return sentence_words
 config = yaml.load(open("config.yml", encoding="utf-8"))
 TRAIN_TOKEN_RABEL_FILE = (config["train_token_label_file"]["tokens"],config["train_token_label_file"]["labels"])
-MODEL_FILE = (config["cnn-model"]["attr_model"],config["cnn-model"]["encoder_model"])
+MODEL_FILE = (config["cnn-model"]["attr_model"],config["cnn-model"]["cnn_model"])
 epoch_num = int(config["cnn-model"]["epoch"])
 batch_size = int(config["cnn-model"]["batch"])
 embed_size = int(config["cnn-model"]["embed"])
 out_size = int(config["cnn-model"]["out_size"])
 filter_height_list = config["cnn-model"]["filter-height-list"]
 kernel_dim_size = int(config["cnn-model"]["kernel_dim_size"])
+max_vocab_size = int(config["cnn-model"]["max_vocab_size"])
 dropout = float(config["cnn-model"]["dropout"])
 save_model_path = config["save_model_path"]
 UNKNOWN_TAG = ("<UNK>", 0)
