@@ -1,0 +1,7 @@
+# practice-cnn-classification
+
+word単位の通常のcnnでのテキスト分類
+
+word単位の通常のcnnに文字単位のcnnをconcatしてテキスト分類
+
+word単位の通常のcnnに文字単位のlstmをconcatしてテキスト分類
