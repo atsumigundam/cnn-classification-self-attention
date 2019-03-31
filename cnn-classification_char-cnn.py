@@ -124,48 +124,93 @@ handler = StreamHandler()
 handler.setLevel(INFO)
 logger.setLevel(INFO)
 logger.addHandler(handler)
+class char_word_embeding(nn.Module):
+    def __init__(self,word_vocab_size,char_vocab_size,word_embed_size,char_embed_size,char_kernel_dim_size,char_filter_height_list):
+        super().__init__()
+        self.word_vocab_size = word_vocab_size
+        self.char_vocab_size = char_vocab_size
+        self.word_embed_size = word_embed_size
+        self.char_embed_size = char_embed_size
+        self.char_kernel_dim_size = char_kernel_dim_size
+        self.char_filter_height_list = char_filter_height_list #[1,2,3]
+        self.word_embed = nn.Embedding(self.word_vocab_size, self.word_embed_size,padding_idx=PAD_TAG[1])
+        self.char_embed = nn.Embedding(self.char_vocab_size,self.char_embed_size, padding_idx = PAD_TAG[1])
+        self.allconvs = nn.ModuleList([nn.Conv2d(1, self.char_kernel_dim_size, (filter_height, self.char_embed_size)) for filter_height in char_filter_height_list])
+        self.liner = nn.Linear(len(char_filter_height_list)*self.char_kernel_dim_size, self.char_embed_size)
+    def forward(self,word_sentences,char_sentences):
+        # word part
+        word_embeds = self.word_embed(word_sentences) #(batch,max_sentence_size,word_embed_size)
+        #char-cnn part
+        char_sentences = char_sentences.view(-1, char_sentences.size(2)) #(batch*max_sentence_size,max_char_size)
+        char_embeds = self.char_embed(char_sentences) # (batch*max_sentence_size,max_char_size,char_embed_size)
+        char_embeds = char_embeds.unsqueeze(1) # (batch*max_sentence_size,1(入力チャンネル),max_char_size,char_embed_size)
+        x = [F.relu(conv(char_embeds)).squeeze(3) for conv in self.allconvs]# [(batch*max_sentence_size,kernel_dim_size, 畳み込んだ後の要素数), ...]*len(char_filter_height_list)
+        x = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in x] #[(batch*max_sentence_size,kernel_dim_size), ...]*len(char_filter_height_list)
+        x = torch.cat(x, 1) # (batch*max_sentence_size,len(char_filter_height_list)*char_kernel_dim_size)
+        x = self.liner(x) # (batch*max_sentence_size,char_embed_size)
+        x = x.view(len(word_sentences), -1, x.size(1)) #(batch,max_sentence_size,char_embed_size)
+        #word+char-cnn
+        word_char_embed = torch.cat((word_embed_data,x),dim=2) ##(batch,max_sentence_size,char_embed_size+word_embed_size)
+        return word_char_embed
+        
 class textCNN(nn.Module):
-    def __init__(self,vocab_size,embed_size,filter_height_list,kernel_dim_size,dropout,out_size):
+    def __init__(self,word_vocab_size,char_vocab_size,word_embed_size,char_embed_size,word_filter_height_list,char_filter_height_list,word_kernel_dim_size,char_kernel_dim_size,dropout,out_size):
         super(textCNN, self).__init__()
-        self.vocab_size = vocab_size
-        self.embed_size = embed_size
-        self.filter_height_list = filter_height_list
-        self.kernel_dim_size = kernel_dim_size
+        self.word_vocab_size = word_vocab_size
+        self.char_vocab_size = char_vocab_size
+        self.word_embed_size = word_embed_size
+        self.char_embed_size = char_embed_size
+        self.word_filter_height_list = word_filter_height_list #[3,4,5]
+        self.char_filter_height_list = char_filter_height_list
+        self.word_kernel_dim_size = word_kernel_dim_size
+        self.char_kernel_dim_size = char_kernel_dim_size
         self.out_size = out_size
         self.dropout = dropout
-        self.embed = nn.Embedding(self.vocab_size, self.embed_size)
-        self.conv13 = nn.Conv2d(1, self.kernel_dim_size, (3, self.embed_size))
-        self.conv14 = nn.Conv2d(1, self.kernel_dim_size, (4, self.embed_size))
-        self.conv15 = nn.Conv2d(1, self.kernel_dim_size, (5, self.embed_size))
-        #self.allconvs = nn.ModuleList([nn.Conv2d(1, self.kernel_dim_size, (filter_height, self.embed_size)) for filter_height in filter_height_list]) //まとめたやつ
+        self.embed = char_word_embeding(self.word_vocab_size,self.char_vocab_size,self.word_embed_size,self.char_embed_size,self.char_kernel_dim_size,self.char_filter_height_list)
+        self.conv13 = nn.Conv2d(1, self.word_kernel_dim_size, (3, self.word_embed_size+self.char_embed_size))
+        self.conv14 = nn.Conv2d(1, self.word_kernel_dim_size, (4, self.word_embed_size+self.char_embed_size))
+        self.conv15 = nn.Conv2d(1, self.word_kernel_dim_size, (5, self.word_embed_size+self.char_embed_size))
+        #self.allconvs = nn.ModuleList([nn.Conv2d(1, self.word_kernel_dim_size, (filter_height, self.word_embed_size+self.char_embed_size)) for filter_height in word_filter_height_list]) //まとめたやつ
         self.dropout = nn.Dropout(self.dropout)
-        self.liner = nn.Linear(len(filter_height_list)*self.kernel_dim_size, self.out_size)
+        self.liner = nn.Linear(len(word_filter_height_list)*self.word_kernel_dim_size, self.out_size)
     def conv_and_pool(self, x, conv):
-        x = F.relu(conv(x)).squeeze(3)# (batch, kernel_dim_size, 畳み込んだ後の要素数)
-        x = F.max_pool1d(x, x.size(2)).squeeze(2) # (batch, kernel_dim_size)
+        x = F.relu(conv(x)).squeeze(3)# (batch, word_kernel_dim_size, 畳み込んだ後の次元数)
+        x = F.max_pool1d(x, x.size(2)).squeeze(2) # (batch, word_kernel_dim_size)
         return x
-    def forward(self, sentence,sentencelength):
-        embed_sentence = self.embed(sentence)   # (batch, max_sentence_size, embedsize)
-        embed_sentence_plus = embed_sentence.unsqueeze(1) #(batch,1,max_sentence_size, embedsize)
-        x1 = self.conv_and_pool(embed_sentence_plus,self.conv13) #(batch,kernel_dim_size)
-        x2 = self.conv_and_pool(embed_sentence_plus,self.conv14) #(batch,kernel_dim_size)
-        x3 = self.conv_and_pool(embed_sentence_plus,self.conv15) #(batch,kernel_dim_size)
-        x = torch.cat((x1, x2, x3), 1) # (batch,len(filter_height_list)*kernel_dim_size)
+    def forward(self,word_sentences,char_sentences):
+        embed_sentence = self.embed(word_sentences,char_sentences)# (batch, max_sentence_size, word_embed_size+char_embed_size)
+        embed_sentence_plus = embed_sentence.unsqueeze(1) #(batch,1,max_sentence_size,vword_embed_size+char_embed_size)
+        x1 = self.conv_and_pool(embed_sentence_plus,self.conv13) #(batch,word_kernel_dim_size)
+        x2 = self.conv_and_pool(embed_sentence_plus,self.conv14) #(batch,word_kernel_dim_size)
+        x3 = self.conv_and_pool(embed_sentence_plus,self.conv15) #(batch,word_kernel_dim_size)
+        x = torch.cat((x1, x2, x3), 1) # (batch,len(word_filter_height_list)*word_kernel_dim_size)
         """
         まとめたやつ
-        x = [F.relu(conv(x)).squeeze(3) for conv in self.allconvs]  // [(batch,kernel_dim_size, 畳み込んだ後の要素数), ...]*len(filter_height_list)
-        x = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in x]  // [(batch,kernel_dim_size), ...]*len(filter_height_list)
+        x = [F.relu(conv(x)).squeeze(3) for conv in self.allconvs]  // [(batch,kernel_dim_size, 畳み込んだ後の要素数), ...]*len(word_filter_height_list)
+        x = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in x]  // [(batch,kernel_dim_size), ...]*len(word_filter_height_list)
         x = torch.cat(x, 1)
         """
         x = self.dropout(x)
         out = self.liner(x) #(batch, outsize)
         return out
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-def train(train_data, word_to_id, id_to_word, model_path):
+def batch_padding(word_sentences,char_sentences,word_to_id,char_to_id):
+    word_max_length = max([len(seq) for seq in word_sentences])
+    char_max_length = max([max([len(char) for char in word]) for word in char_sentences])
+    word_pad = [[word_to_id[PAD_TAG[0]]]*char_max_length]
+    word_sentences = [x+[word_to_id[PAD_TAG[0]]]*(word_max_length - len(x)) for x in word_sentences]
+    char_sentences = [[w + [word_to_id[PAD_TAG[0]]] * (char_max_length - len(w)) for w in x] for x in char_sentences]
+    char_sentences = [x + (word_pad * (word_max_length - len(x))) for x in char_sentences]
+    return word_sentences,char_sentences
+def padding_mask(word_sentences,word_to_id):
+    #print(word_sentences.data)
+    mask = word_sentences.data.eq(word_to_id[PAD_TAG[0]])
+    return (mask, word_sentences.size(1) - mask.sum(1))
+def train(train_data,word_to_id,id_to_word,char_to_id,model_path):
     logger.info("========= WORD_SIZE={} ==========".format(len(word_to_id)))
     logger.info("========= TRAIN_SIZE={} =========".format(len(train_data)))
     logger.info("========= START_TRAIN ==========")
-    CNN = textCNN(len(word_to_id),embed_size,filter_height_list,kernel_dim_size,dropout,out_size).to(device)
+    CNN = textCNN(len(word_to_id),len(char_to_id),word_embed_size,char_embed_size,word_filter_height_list,char_filter_height_list,word_kernel_dim_size,char_kernel_dim_size,dropout,out_size).to(device)
     CNN_optimizer = optim.Adam(CNN.parameters(), lr=0.01,weight_decay=1e-4)
     all_EPOCH_LOSS = []
     for epoch in range(epoch_num):
@@ -175,17 +220,18 @@ def train(train_data, word_to_id, id_to_word, model_path):
         for count,batch_data in enumerate(batch_training_data):
             logger.debug("===== {} / {} =====".format(count, len(batch_training_data)))
             batch_data.sort(key=lambda batch_data:len(batch_data[0]),reverse=True)
-            textsentences = [data[0] for data in batch_data]
-            labels = [data[1] for data in batch_data]
-            textlen_sen = [len(seq) for seq in textsentences]
-            inputsentences = [sentence if len(sentence)==max(textlen_sen) else sentence+[word_to_id[PAD_TAG[0]] for i in range(max(textlen_sen) - len(sentence))] for sentence in textsentences]
-            input_padding_list = [sentence.index(word_to_id[PAD_TAG[0]]) if word_to_id[PAD_TAG[0]] in sentence else len(sentence) for sentence in textsentences]
-            labelslist = [int(label[0]) for label in labels]
-            ##training
+            word_sentences = [data[0] for data in batch_data]
+            char_sentences = [data[1] for data in batch_data]
+            word_sentences,char_sentences = batch_padding(word_sentences,char_sentences,word_to_id,char_to_id)
+            labelslist = [data[2] for data in batch_data]
+            labels = [int(label[0]) for label in labelslist]
+            word_sentences = torch.tensor(word_sentences,dtype=torch.long,device=device)
+            word_length = padding_mask(word_sentences,word_to_id)
+            char_sentences = torch.tensor(char_sentences,dtype=torch.long,device=device)
+            y = torch.tensor(labels,dtype=torch.long,device=device)
+            #training
             CNN_optimizer.zero_grad()
-            inputsentences = torch.tensor(inputsentences,dtype=torch.long,device=device)
-            y = torch.tensor(labelslist,dtype=torch.long,device=device)
-            CNN_out = CNN(inputsentences,input_padding_list)
+            CNN_out = CNN(word_sentences,char_sentences)
             loss = F.cross_entropy(CNN_out, y)
             loss.backward()
             CNN_optimizer.step()
@@ -214,9 +260,14 @@ def get_train_data(TRAIN_TOKEN_RABEL_FILE,max_vocab_size):
         text_lines = text_file.readlines()
         label_lines = label_file.readlines()
         word_vocab = []
+        char_vocab = []
     for line1 in text_lines:
-        word_vocab.extend(line1.replace("\t", " ").split())
-    logger.debug(word_vocab)
+        words = line1.replace("\t", " ").split()
+        word_vocab.extend(words)
+        for word in words:
+            char_vocab.extend(list(word))
+    #word part
+    logger.debug(char_vocab)
     word_vocab_counter = Counter(word_vocab)
     word_vocab = [v[0] for v in word_vocab_counter.most_common(max_vocab_size)]
     word_to_id = {v: i + 2 for i, v in enumerate(word_vocab)}
@@ -224,15 +275,24 @@ def get_train_data(TRAIN_TOKEN_RABEL_FILE,max_vocab_size):
     word_to_id[PAD_TAG[0]] = PAD_TAG[1]
     id_to_word = {i: v for v, i in word_to_id.items()}
     logger.debug(id_to_word)
+    #char part
+    logger.debug(char_vocab)
+    char_vocab_counter = Counter(char_vocab)
+    char_to_id = {v: i + 2 for i, v in enumerate(char_vocab_counter)}
+    char_to_id[UNKNOWN_TAG[0]] = UNKNOWN_TAG[1]
+    char_to_id[PAD_TAG[0]] = PAD_TAG[1]
+    id_to_char = {i: v for v, i in char_to_id.items()}
+    logger.debug(id_to_char)
     train_data = []
     for text_line, label_line in zip(text_lines, label_lines):
         if len(text_line) < 1:
             continue
         text_words = [word_to_id[word] if word in word_to_id.keys() else word_to_id[UNKNOWN_TAG[0]] for word in text_line.split()]
+        text_chars = [[char_to_id[char] if char in char_to_id.keys() else char_to_id[UNKNOWN_TAG[0]] for char in word] for word in text_line.split()]
         labels = [label_line.replace("\n","")]
         if len(text_words) > 0:
-            train_data.append([text_words, labels])
-    return train_data, word_to_id, id_to_word
+            train_data.append([text_words,text_chars,labels])
+    return train_data, word_to_id, id_to_word,char_to_id
 def tokenize():
     logger.info("========= START TO TOKENIZE ==========")
     data_tokens = []
@@ -257,21 +317,25 @@ def sentence2words(sentence):
     return sentence_words
 config = yaml.load(open("config.yml", encoding="utf-8"))
 TRAIN_TOKEN_RABEL_FILE = (config["train_token_label_file"]["tokens"],config["train_token_label_file"]["labels"])
-MODEL_FILE = config["cnn-model"]["cnn_model"]
-epoch_num = int(config["cnn-model"]["epoch"])
-batch_size = int(config["cnn-model"]["batch"])
-embed_size = int(config["cnn-model"]["embed"])
-out_size = int(config["cnn-model"]["out_size"])
-filter_height_list = config["cnn-model"]["word_filter-height-list"]
-kernel_dim_size = int(config["cnn-model"]["kernel_dim_size"])
-max_vocab_size = int(config["cnn-model"]["max_vocab_size"])
-dropout = float(config["cnn-model"]["dropout"])
+MODEL_FILE = config["cnn-charcnn-model"]["model_path"]
+epoch_num = int(config["cnn-charcnn-model"]["epoch"])
+batch_size = int(config["cnn-charcnn-model"]["batch"])
+word_embed_size = int(config["cnn-charcnn-model"]["word_embed"])
+char_embed_size = int(config["cnn-charcnn-model"]["char_embed"])
+out_size = int(config["cnn-charcnn-model"]["out_size"])
+word_filter_height_list = config["cnn-charcnn-model"]["word_filter-height-list"]
+char_filter_height_list = config["cnn-charcnn-model"]["char_filter-height-list"]
+char_kernel_dim_size = int(config["cnn-charcnn-model"]["char_kernel_dim_size"])
+word_kernel_dim_size = int(config["cnn-charcnn-model"]["word_kernel_dim_size"])
+max_vocab_size = int(config["cnn-charcnn-model"]["max_vocab_size"])
+dropout = float(config["cnn-charcnn-model"]["dropout"])
 UNKNOWN_TAG = ("<UNK>", 0)
 PAD_TAG = ("<PAD>",1)
+
 def main():
     #tokenize()
-    traindata,word_to_id,id_to_word=get_train_data(TRAIN_TOKEN_RABEL_FILE,max_vocab_size)
-    train(traindata,word_to_id,id_to_word,MODEL_FILE)
+    traindata,word_to_id,id_to_word,char_to_id=get_train_data(TRAIN_TOKEN_RABEL_FILE,max_vocab_size)
+    train(traindata,word_to_id,id_to_word,char_to_id,MODEL_FILE)
 if __name__ == '__main__':
     print(torch.cuda.is_available())
     main()

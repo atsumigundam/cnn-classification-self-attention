@@ -1,19 +1,41 @@
 cnn-model:
-  epoch: 10
-  batch: 20
+  epoch: 5
+  batch: 3
   out_size: 2
-  embed: 56
-  filter-height-list: [1,2,3]
-  kernel_dim_size: 20
-  dropout: 0.02
+  embed: 64
+  word_filter-height-list: [3,4,5]
+  kernel_dim_size: 100
+  dropout: 0
   max_vocab_size: 32000
-  attr_model: ./resources/attr_model
-  cnn_model: ./resources/cnn_model
+  model_path: ./resources/cnn_model
+cnn-charcnn-model:
+  epoch: 5
+  batch: 3
+  out_size: 2
+  word_embed: 64
+  char_embed: 64
+  word_filter-height-list: [3,4,5]
+  char_filter-height-list: [1,2,3]
+  word_kernel_dim_size: 100
+  char_kernel_dim_size: 50
+  dropout: 0
+  max_vocab_size: 32000
+  model_path: ./resources/cnn_charcnn_model
+cnn-charlstm-model:
+  epoch: 5
+  batch: 3
+  out_size: 2
+  word_embed: 64
+  char_embed: 64
+  char_hidden: 128
+  word_filter_height_list: [3,4,5]
+  word_kernel_dim_size: 100
+  char_lstm_layers: 1
+  dropout: 0
+  max_vocab_size: 32000
+  model_path: ./resources/cnn_charlstm_model
 train_file:
   resorces: ./resources/train.txt
 train_token_label_file:
   tokens: ./resources/train_token.txt
   labels: ./resources/train_label.txt
-save_model_path:
-  attr_model: ./resources/attr_model
-  cnn_model: ./resources/cnn_model
