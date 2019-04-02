@@ -124,6 +124,8 @@ handler = StreamHandler()
 handler.setLevel(INFO)
 logger.setLevel(INFO)
 logger.addHandler(handler)
+
+
 class textCNN(nn.Module):
     def __init__(self,vocab_size,embed_size,filter_height_list,kernel_dim_size,dropout,out_size):
         super(textCNN, self).__init__()
@@ -140,10 +142,12 @@ class textCNN(nn.Module):
         #self.allconvs = nn.ModuleList([nn.Conv2d(1, self.kernel_dim_size, (filter_height, self.embed_size)) for filter_height in filter_height_list]) //まとめたやつ
         self.dropout = nn.Dropout(self.dropout)
         self.liner = nn.Linear(len(filter_height_list)*self.kernel_dim_size, self.out_size)
+
     def conv_and_pool(self, x, conv):
         x = F.relu(conv(x)).squeeze(3)# (batch, kernel_dim_size, 畳み込んだ後の要素数)
         x = F.max_pool1d(x, x.size(2)).squeeze(2) # (batch, kernel_dim_size)
         return x
+        
     def forward(self, sentence,sentencelength):
         embed_sentence = self.embed(sentence)   # (batch, max_sentence_size, embedsize)
         embed_sentence_plus = embed_sentence.unsqueeze(1) #(batch,1,max_sentence_size, embedsize)
@@ -160,7 +164,9 @@ class textCNN(nn.Module):
         x = self.dropout(x)
         out = self.liner(x) #(batch, outsize)
         return out
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 def train(train_data, word_to_id, id_to_word, model_path):
     logger.info("========= WORD_SIZE={} ==========".format(len(word_to_id)))
     logger.info("========= TRAIN_SIZE={} =========".format(len(train_data)))
@@ -196,6 +202,7 @@ def train(train_data, word_to_id, id_to_word, model_path):
         all_EPOCH_LOSS.append(total_loss)
     [logger.info("================ batchnumber: {}---loss: {}=======================".format(batchnumber,loss)) for batchnumber,loss in enumerate(all_EPOCH_LOSS)]
     torch.save(CNN.state_dict(), model_path)
+
 def makeminibatch(training_data):
     n = len(training_data)
     mini_batch_size = int(n/batch_size)
@@ -207,6 +214,7 @@ def makeminibatch(training_data):
         else:
             batch_training_data.append(training_data[i:i+batch_size])
     return batch_training_data
+
 def get_train_data(TRAIN_TOKEN_RABEL_FILE,max_vocab_size):
     logger.info("========= START TO GET TOKEN ==========")
     with open(file=TRAIN_TOKEN_RABEL_FILE[0], encoding="utf-8") as text_file, open(file=TRAIN_TOKEN_RABEL_FILE[1],
@@ -233,6 +241,7 @@ def get_train_data(TRAIN_TOKEN_RABEL_FILE,max_vocab_size):
         if len(text_words) > 0:
             train_data.append([text_words, labels])
     return train_data, word_to_id, id_to_word
+
 def tokenize():
     logger.info("========= START TO TOKENIZE ==========")
     data_tokens = []
@@ -244,6 +253,7 @@ def tokenize():
         for (line1, line2) in zip(data_tokens,data_labels):
             f1.write(line1 + "\r\n")
             f2.write(str(line2) + "\r\n")
+
 def sentence2words(sentence):
     sentence = sentence.lower()
     sentence = sentence.replace("\n", "")
@@ -255,6 +265,9 @@ def sentence2words(sentence):
             continue
         sentence_words.append(word)     
     return sentence_words
+"""
+config
+"""
 config = yaml.load(open("config.yml", encoding="utf-8"))
 TRAIN_TOKEN_RABEL_FILE = (config["train_token_label_file"]["tokens"],config["train_token_label_file"]["labels"])
 MODEL_FILE = config["cnn-model"]["cnn_model"]
